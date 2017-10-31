@@ -36,6 +36,7 @@ function drush_json_content_import($file) {
   $base_path = dirname($file);
   $json_file = basename($file);
   $result = json_content_import($base_path, $json_file);
+  $ci = array();
   if (is_array($result)) {
     /** @var array[] $ci */
     $ci += $result;
