@@ -1,0 +1,11 @@
+[
+  {
+    "entity": "node",
+    "type": "article",
+    "title": "Example JSON Content Article",
+    "body": {
+      "value": "<h2>Example</h2>\n<p>Lorem ipsum dolor samet.",
+      "format": "filtered"
+    }
+  }
+]

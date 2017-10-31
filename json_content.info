@@ -1,0 +1,5 @@
+name = JSON Content
+description = Content management and migration using JSON.
+package = Content
+core = 7.x
+dependencies[] = entity

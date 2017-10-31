@@ -1,0 +1,174 @@
+<?php
+
+/**
+ * @file
+ * Provides functions for the JSON Content module.
+ */
+
+include __DIR__ . '/includes/process_generator.inc';
+include __DIR__ . '/includes/process_image.inc';
+include __DIR__ . '/includes/process_paragraph.inc';
+include __DIR__ . '/includes/process_reference.inc';
+
+/**
+ * Imports a JSON file in Drupal JSON Content format as entities.
+ *
+ * @param string $base_path
+ *   The file base path.
+ *
+ * @return bool|array
+ *   TRUE if the import succeeds or an array of errors if it fails.
+ *
+ * @TODO: Add support for logging service & overrides (Drush or Watchdog).
+ */
+function json_content_import($base_path, $file_path) {
+  $file_uri = $base_path . DIRECTORY_SEPARATOR . $file_path;
+  /** @var array[] $content */
+  $file = file_get_contents($file_uri);
+  if (!$file) {
+    return array(
+      'errors' => array(
+        "Error attempting to load demo file $file_uri.",
+      ),
+    );
+  }
+  $content = drupal_json_decode($file);
+  $file_dir = dirname($file_uri);
+  $entities = array();
+  foreach ($content as $import) {
+    if (isset($import['entity'])) {
+      $entity = json_content_import_entity($import, $file_dir);
+      $entities[$entity->type()][$entity->getIdentifier()] = $entity->value();
+    }
+  }
+  if (empty($entities)) {
+    return array(
+      'errors' => array("Warning: demo file $file_uri had no valid content."),
+    );
+  }
+  return $entities;
+}
+
+/**
+ * Imports a JSON content formatted entity.
+ *
+ * @param array $item
+ *   The item to import, recursively.
+ * @param string $base_path
+ *   The base path for the JSON item file.
+ *
+ * @return \EntityDrupalWrapper
+ *   The EntityMetadataWrapper for the imported entity.
+ *
+ * @throws \EntityMalformedException
+ */
+function json_content_import_entity(array $item, $base_path) {
+  if (!isset($item['entity'])) {
+    throw new EntityMalformedException(t('Missing entity type on entity.'));
+  }
+  $type = $item['entity'];
+  $info = entity_get_property_info($type);
+  // @see /includes/common.inc\entity_extract_ids
+  if (!empty($info['entity keys']['bundle'])) {
+    // Explicitly fail for malformed entities missing the bundle property.
+    if (empty($item->{$info['entity keys']['bundle']})) {
+      throw new EntityMalformedException(t(
+        'Missing bundle property on entity of type @entity_type.',
+        array('@entity_type' => $type)));
+    }
+    $bundle_key = $info['entity keys']['bundle'];
+  }
+  else {
+    $bundle_key = 'type';
+  }
+  $bundle = !empty($item[$bundle_key]) ? $item[$bundle_key] : $type;
+  $values = array(
+    'uid' => !empty($item['uid']) ? $item['uid'] : 1,
+    $bundle_key => $bundle,
+    'bundle' => $bundle,
+  );
+  unset($item['entity'], $item['uid'], $item[$bundle_key]);
+  $entity_value = entity_create($type, $values);
+  /** @var \EntityDrupalWrapper $entity */
+  $entity = entity_metadata_wrapper($type, $entity_value);
+  $entity = json_content_import_entity_properties($entity,
+    $item,
+    $base_path);
+  return $entity->save();
+}
+
+/**
+ * Assigns properties from JSON content to an entity.
+ *
+ * @param \EntityDrupalWrapper $entity
+ *   The entity with which to assign properties.
+ * @param array[] $properties
+ *   An array of Drupal-formatted properties.
+ * @param string $base_path
+ *   The base path for the JSON item file.
+ *
+ * @return \EntityDrupalWrapper
+ *   Entity with properties assigned.
+ */
+function json_content_import_entity_properties(EntityDrupalWrapper $entity, array $properties, $base_path) {
+  $lang = $entity->getPropertyLanguage();
+  /** @var mixed $value */
+  foreach ($properties as $property => $value) {
+    // Guess the field cardinality from the data if there is no field info.
+    if ($field = field_info_field($property)) {
+      $cardinality = (int) $field['cardinality'];
+    }
+    else {
+      $cardinality = is_scalar($value) ? 1 : count($value);
+    }
+    // Determine the cardinality of the property data.
+    $sequential = FALSE;
+    if (is_array($value)) {
+      $sequential = TRUE;
+      foreach ($value as $delta => $item) {
+        if ($delta !== (int) $delta) {
+          $sequential = FALSE;
+        }
+      }
+    }
+    // Wrap the field as multi-value for processing.
+    $value = !$sequential ? array($value) : $value;
+    foreach ($value as $delta => $item) {
+      if (!empty($item['#process'])) {
+        $callback = $item['#process'];
+        $callback_func = "json_content_$callback" . '_process';
+        $args = array(
+          $entity,
+          $property,
+          $base_path,
+        );
+        $item['args'] = is_scalar($item['args'])
+          ? array($item['args'])
+          : $item['args'];
+        if ($lang !== NULL && !isset($item['args']['language'])) {
+          $item['args']['language'] = $lang;
+        }
+        $args = array_merge($args, $item['args']);
+        $func_exists = function_exists($callback_func);
+        $item = $func_exists
+          ? call_user_func_array($callback_func, $args)
+          : NULL;
+        drupal_alter("json_content_$callback", $item);
+        $value[$delta] = $item;
+      }
+    }
+    // Unwrap the field if necessary.
+    if ($cardinality === 1) {
+      $value = isset($value[0]) ? $value[0] : $value;
+    }
+    try {
+      $entity->{$property} = $value;
+    }
+    catch (Exception $e) {
+      watchdog('error',
+        "Property error: @property: @error",
+        array('@property' => $property, '@error' => $e->getMessage()));
+    }
+  }
+  return $entity;
+}
