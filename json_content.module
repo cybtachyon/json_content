@@ -19,18 +19,20 @@ include __DIR__ . '/includes/process_reference.inc';
  * @return bool|array
  *   TRUE if the import succeeds or an array of errors if it fails.
  *
+ * @throws \RuntimeException
+ *   Indicates an exception has occurred during import.
+ *
  * @TODO: Add support for logging service & overrides (Drush or Watchdog).
  */
 function json_content_import($base_path, $file_path) {
   $file_uri = $base_path . DIRECTORY_SEPARATOR . $file_path;
+  if (!file_exists($file_uri)) {
+    throw new RuntimeException("Demo file $file_uri does not exist.");
+  }
   /** @var array[] $content */
   $file = file_get_contents($file_uri);
   if (!$file) {
-    return array(
-      'errors' => array(
-        "Error attempting to load demo file $file_uri.",
-      ),
-    );
+    throw new RuntimeException("Error attempting to load demo file $file_uri.");
   }
   $content = drupal_json_decode($file);
   $file_dir = dirname($file_uri);
@@ -42,9 +44,9 @@ function json_content_import($base_path, $file_path) {
     }
   }
   if (empty($entities)) {
-    return array(
-      'errors' => array("Warning: demo file $file_uri had no valid content."),
-    );
+    watchdog('error',
+      'Warning: demo file @file had no valid content.',
+      array('@file' => $file_uri));
   }
   return $entities;
 }
