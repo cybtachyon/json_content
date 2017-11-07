@@ -9,6 +9,7 @@ include __DIR__ . '/includes/process_generator.inc';
 include __DIR__ . '/includes/process_image.inc';
 include __DIR__ . '/includes/process_paragraph.inc';
 include __DIR__ . '/includes/process_reference.inc';
+include __DIR__ . '/includes/process_term.inc';
 
 /**
  * Imports a JSON file in Drupal JSON Content format as entities.
@@ -114,6 +115,7 @@ function json_content_import_entity(array $item, $base_path) {
  */
 function json_content_import_entity_properties(EntityDrupalWrapper $entity, array $properties, $base_path) {
   $lang = $entity->getPropertyLanguage();
+  $info = $entity->getPropertyInfo();
   /** @var mixed $value */
   foreach ($properties as $property => $value) {
     // Guess the field cardinality from the data if there is no field info.
@@ -135,6 +137,7 @@ function json_content_import_entity_properties(EntityDrupalWrapper $entity, arra
     }
     // Wrap the field as multi-value for processing.
     $value = !$sequential ? array($value) : $value;
+    $clear = TRUE;
     foreach ($value as $delta => $item) {
       if (!empty($item['#process'])) {
         $callback = $item['#process'];
@@ -144,13 +147,11 @@ function json_content_import_entity_properties(EntityDrupalWrapper $entity, arra
           $property,
           $base_path,
         );
-        $item['args'] = is_scalar($item['args'])
-          ? array($item['args'])
-          : $item['args'];
+        $item['args'] = (array) $item['args'];
         if ($lang !== NULL && !isset($item['args']['language'])) {
           $item['args']['language'] = $lang;
         }
-        $args = array_merge($args, $item['args']);
+        $args = array_merge(array($args), $item['args']);
         $func_exists = function_exists($callback_func);
         $item = $func_exists
           ? call_user_func_array($callback_func, $args)
@@ -158,18 +159,36 @@ function json_content_import_entity_properties(EntityDrupalWrapper $entity, arra
         drupal_alter("json_content_$callback", $item);
         $value[$delta] = $item;
       }
+      $clear = !empty($item) ? FALSE : $clear;
     }
     // Unwrap the field if necessary.
     if ($cardinality === 1) {
       $value = isset($value[0]) ? $value[0] : $value;
     }
+    // Workaround for EntityMetadataWrapper not allowing arbitrary properties.
+    if (!isset($info[$property])) {
+      $entity_value = $entity->value();
+      $entity_value->{$property} = $value;
+      $entity->set($entity_value);
+      continue;
+    }
     try {
-      $entity->{$property} = $value;
+      if ($clear) {
+        $entity->{$property} = NULL;
+      }
+      else {
+        $entity->{$property} = $value;
+      }
     }
     catch (Exception $e) {
       watchdog('error',
-        "Property error: @property: @error",
-        array('@property' => $property, '@error' => $e->getMessage()));
+        "@entity:@bundle property error: @property: @error",
+        array(
+          '@entity' => $entity->type(),
+          '@bundle' => $entity->getBundle(),
+          '@property' => $property,
+          '@error' => $e->getMessage(),
+        ));
     }
   }
   return $entity;

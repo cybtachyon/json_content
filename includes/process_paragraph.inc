@@ -10,25 +10,30 @@
 /**
  * Reference process callback for json_content_CALLBACK_process.
  *
- * @param EntityDrupalWrapper $entity
- *   The entity with which to process the paragraph.
- * @param string $name
- *   The name of the paragraphs field.
- * @param string $base_path
- *   The base path for the JSON item file.
+ * @param array $config
+ *   The current JSON Content import configuration.
+ *   - EntityDrupalWrapper $entity
+ *     The entity with which to process the paragraph.
+ *   - string $name
+ *     The name of the paragraphs field.
+ *   - string $base_path
+ *     The base path for the JSON item file.
  * @param array $field_value
  *   The Drupal JSON config for the field.
  *
  * @return array
  *   A paragraphs field value from the input config.
  */
-function json_content_paragraph_process(
-  EntityDrupalWrapper $entity,
-  $name,
-  $base_path,
-  array $field_value) {
-
+function json_content_paragraph_process(array $config, array $field_value) {
+  if (!module_exists('paragraphs')) {
+    return NULL;
+  }
+  /** @var EntityDrupalWrapper $entity */
+  /** @var string $name */
+  /** @var string $base_path */
+  list($entity, $name, $base_path) = $config;
   $entity_value = $entity->value();
+
   if (empty($field_value)) {
     return NULL;
   }
@@ -44,8 +49,12 @@ function json_content_paragraph_process(
   $paragraph = json_content_import_entity_properties($paragraph,
     $field_value,
     $base_path);
+  $paragraph_value = $paragraph->value();
+  if (!$paragraph_value) {
+    return NULL;
+  }
   try {
-    $paragraph->value()->save(TRUE);
+    $paragraph_value->save(TRUE);
   }
   catch (Exception $e) {
     watchdog('error', $e->getMessage());
@@ -55,5 +64,5 @@ function json_content_paragraph_process(
   // There is an issue with setting revision ID via EMD.
   // @see https://www.drupal.org/node/2621866
   $entity->set($entity_value);
-  return $paragraph->value();
+  return $paragraph_value;
 }
